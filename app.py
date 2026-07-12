@@ -30,6 +30,9 @@ class ChatPayload(BaseModel):
     messages: list
     options: Optional[dict] = None
 
+class CodePayload(BaseModel):
+    code: str
+
 def get_memory_stats():
     vm = psutil.virtual_memory()
     stats = {
@@ -106,6 +109,20 @@ async def benchmark_hardware():
 @app.get("/api/metrics")
 async def get_live_metrics():
     return get_memory_stats()
+
+@app.post("/api/execute")
+async def execute_python_code(payload: CodePayload):
+    output_buffer = io.StringIO()
+    try:
+        with redirect_stdout(output_buffer):
+            exec_globals = {}
+            exec(payload.code, exec_globals)
+        result = output_buffer.getvalue()
+        if not result.strip():
+            result = "[Execution Successful: No terminal output returned.]"
+        return {"success": True, "output": result}
+    except Exception as e:
+        return {"success": False, "output": f"Runtime Error: {str(e)}"}
 
 def compress_context_safeguard(messages: list) -> list:
     def estimate_tokens(msg): 
