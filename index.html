@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🛡️ Adapt AI Pro Ultimate Dashboard</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 h-screen flex flex-col selection:bg-cyan-500/30 overflow-hidden">
+  
+  <div class="fixed inset-0 z-[-1] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-900/20 via-slate-950 to-slate-950"></div>
+
+  <header class="border-b border-white/5 bg-slate-950/80 backdrop-blur-md px-6 py-4 flex justify-between items-center z-20 shrink-0">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center text-white font-bold shadow-lg">V</div>
+      <h1 class="text-xl font-bold tracking-tight text-white">Adapt AI <span class="text-[10px] ml-2 text-cyan-400 bg-cyan-400/10 border border-cyan-400/20 px-2 py-0.5 rounded-full">v3.0-Core</span></h1>
+    </div>
+    <div class="flex items-center gap-4">
+      <span id="headerStatus" class="text-xs font-mono bg-white/5 px-3 py-1.5 rounded-full border border-white/10 text-slate-400">Status: Standby</span>
+    </div>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden relative">
+    
+    <aside id="appSidebar" class="w-72 bg-slate-950/50 border-r border-white/5 backdrop-blur-xl flex-col hidden shrink-0 z-10 transition-transform">
+      <div class="p-4">
+        <button id="newWorkspaceBtn" class="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 py-3 rounded-xl text-sm font-medium transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+          New Workspace
+        </button>
+      </div>
+      <div class="px-4 pb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">Recent Local Chats</div>
+      <div id="sidebarChatList" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+      
+      <div class="p-4 border-t border-white/5 space-y-3">
+        <h3 class="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">Hyperparameters</h3>
+        <div class="space-y-1 bg-slate-950/40 p-2 border border-white/5 rounded-lg">
+          <div class="flex justify-between text-[10px] font-mono text-slate-400"><span>Context Size</span><span id="label-num_ctx" class="text-cyan-400">2048</span></div>
+          <input type="range" id="slider-num_ctx" min="1024" max="8192" step="1024" value="2048" class="w-full accent-cyan-400 h-1 bg-slate-800 rounded">
+        </div>
+      </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col overflow-y-auto relative z-0 h-full">
+      
+      <div id="profilerSection" class="w-full max-w-4xl mx-auto p-6 flex-grow flex flex-col justify-center items-center">
+        <div class="bg-slate-900/50 border border-white/10 rounded-3xl shadow-2xl backdrop-blur-sm overflow-hidden w-full">
+          <div class="p-8 border-b border-white/5 text-center flex flex-col items-center">
+            <h2 class="text-3xl font-extrabold tracking-tight mb-3 text-white">Hardware Gatekeeper</h2>
+            <p class="text-slate-400 text-sm max-w-lg mx-auto">Assess your local AI compatibility metrics.</p>
+            
+            <div id="scoreContainer" class="hidden mt-6 flex flex-col items-center">
+              <div class="relative w-28 h-28 flex items-center justify-center">
+                <svg class="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                  <path class="text-slate-800" stroke-width="3" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                  <path id="scoreCircle" class="text-cyan-400 transition-all duration-1000 ease-out" stroke-dasharray="100, 100" stroke-dashoffset="100" stroke-width="3" stroke-linecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                </svg>
+                <div class="absolute text-xl font-mono font-bold text-white" id="scoreNumber">0%</div>
+              </div>
+            </div>
+            <button id="scanBtn" class="mt-6 px-8 py-3.5 bg-white text-slate-950 font-bold rounded-xl">Initialize Scan</button>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5">
+            <div class="p-6 bg-slate-950/30 font-mono text-xs h-56 overflow-y-auto" id="terminalLogs">
+              <span class="text-slate-600 italic">> Awaiting scan...</span>
+            </div>
+            <div id="resultsCard" class="p-6 bg-slate-900/30 opacity-30 pointer-events-none">
+              <div class="mb-4 text-xs font-mono"><span class="text-slate-400">System RAM: </span><span id="sysRamLabel" class="text-cyan-400"></span></div>
+              <div class="mb-4 text-xs font-mono hidden" id="vramContainer"><span class="text-slate-400">GPU VRAM: </span><span id="vramLabel" class="text-emerald-400"></span></div>
+              <label class="block text-xs text-slate-500 font-semibold mb-2">Select AI Model</label>
+              <select id="modelDropdown" class="w-full bg-slate-950 border border-white/10 rounded-lg p-2.5 mb-4 text-sm text-slate-200"></select>
+              <button id="loadChatBtn" class="w-full py-3 bg-gradient-to-r from-cyan-600 to-emerald-600 rounded-lg font-bold hover:brightness-110 transition-all">Launch Workspace</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chatSection" class="hidden flex-col h-full bg-slate-900/20">
+        <div class="bg-slate-950/80 border-b border-white/5 p-4 flex flex-col sm:flex-row justify-between items-center gap-4 shrink-0">
+          <div class="flex items-center gap-3">
+            <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+            <div class="text-xs font-mono text-slate-300">
+              Avail RAM: <span id="liveRam" class="text-cyan-400 font-bold">-- GB</span>
+              <span id="liveVramContainer" class="hidden"> | Free VRAM: <span id="liveVram" class="text-emerald-400 font-bold">-- GB</span></span>
+            </div>
+          </div>
+          <select id="chatModelDropdown" class="bg-slate-900 border border-white/10 rounded px-2 py-1 text-xs text-slate-200 outline-none"></select>
+        </div>
+
+        <div id="chatHistory" class="flex-grow p-4 md:p-8 overflow-y-auto space-y-6 flex flex-col w-full"></div>
+        
+        <div class="p-4 bg-slate-950/60 border-t border-white/5 flex flex-col shrink-0 w-full">
+          <div id="attachmentPreview" class="hidden flex gap-2 mb-2 p-2 bg-slate-900 rounded-lg border border-white/5 text-xs text-slate-300 items-center w-max">
+              <span id="attachmentName" class="font-mono truncate max-w-xs"></span>
+              <button type="button" id="removeAttachmentBtn" class="text-red-400 hover:text-red-300 ml-auto px-2">✕ Remove</button>
+          </div>
+          
+          <form id="chatForm" class="relative flex items-center gap-2">
+            <input type="file" id="fileUpload" class="hidden" accept="image/png, image/jpeg, .txt, .md, .py, .js, .json, .csv, .html">
+            <button type="button" id="attachBtn" class="bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl p-4 transition-colors" title="Attach file or photo">📎</button>
+            <input type="text" id="chatInput" class="flex-grow bg-slate-900 border border-white/10 rounded-xl px-6 py-4 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50" placeholder="Type message..." autocomplete="off">
+            <button type="submit" id="sendBtn" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl px-6 py-4 transition-colors">Send</button>
+            <button type="button" id="stopBtn" class="hidden bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl px-6 py-4 transition-colors">Stop ⏹</button>
+          </form>
+        </div>
+      </div>
+    </main>
+
+    <aside id="appRightSidebar" class="w-80 bg-slate-950/50 border-l border-white/5 backdrop-blur-xl flex-col hidden shrink-0 z-10 transition-transform p-4">
+      <h3 class="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono border-b border-white/5 pb-2">Hardware Allocations</h3>
+      
+      <div class="h-32 w-full bg-slate-950/60 border border-white/5 rounded-xl p-2 flex items-center justify-center relative mt-4">
+        <canvas id="telemetryLiveGraphCanvas"></canvas>
+      </div>
+    </aside>
+
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
