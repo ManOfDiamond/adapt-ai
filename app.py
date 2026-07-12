@@ -25,6 +25,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class ChatPayload(BaseModel):
+    model: str
+    messages: list
+    options: Optional[dict] = None
+
 def get_memory_stats():
     vm = psutil.virtual_memory()
     stats = {
@@ -101,6 +106,67 @@ async def benchmark_hardware():
 @app.get("/api/metrics")
 async def get_live_metrics():
     return get_memory_stats()
+
+def compress_context_safeguard(messages: list) -> list:
+    def estimate_tokens(msg): 
+        text_tokens = len(msg.get('content', '').split()) * 1.3
+        image_penalty = 1000 if msg.get('images') else 0 
+        return text_tokens + image_penalty
+
+    total_tokens = sum(estimate_tokens(msg) for msg in messages)
+    
+    if total_tokens > 2000 and len(messages) > 3:
+        system_prompt = messages[0]
+        recent_conversation = messages[-4:] 
+        return [system_prompt, {"role": "user", "content": "[Context compressed.]"}, *recent_conversation]
+    return messages
+
+@app.post("/api/chat")
+async def chat_stream(payload: ChatPayload):
+    safe_messages = compress_context_safeguard(payload.messages)
+    
+    chat_options = {}
+    if getattr(payload, "options", None):
+        if "num_ctx" in payload.options and payload.options["num_ctx"] is not None:
+            chat_options["num_ctx"] = payload.options["num_ctx"]
+
+    async def event_generator():
+        try:
+            ollama.show(payload.model)
+        except ollama.ResponseError:
+            print(f"\n[Adapt AI] Model '{payload.model}' not found locally. Initiating background pull...")
+            
+            newline = "\n"
+            msg = f"*(Downloading `{payload.model}` in VS Code terminal. Please wait...)*{newline}{newline}"
+            yield f"data: {json.dumps({'content': msg})}\n\n"
+            
+            try:
+                for progress in ollama.pull(payload.model, stream=True):
+                    status = progress.get('status', '')
+                    completed = progress.get('completed')
+                    total = progress.get('total')
+                    
+                    if total is not None and completed is not None and total > 0:
+                        percent = int((completed / total) * 100)
+                        print(f"\rDownloading: {status} [{percent}%]", end="", flush=True)
+                    else:
+                        print(f"\rDownloading: {status}", end="", flush=True)
+                print(f"\n[Adapt AI] Model '{payload.model}' successfully downloaded!\n")
+            except Exception as e:
+                print(f"\n[Adapt AI] Warning: Pull interrupted: {e}")
+                yield f"data: {json.dumps({'content': '⚠️ Model download failed. Check VS Code terminal.'})}\n\n"
+                return 
+
+        try:
+            stream = ollama.chat(model=payload.model, messages=safe_messages, stream=True, options=chat_options)
+            for chunk in stream:
+                yield f"data: {json.dumps({'content': chunk['message']['content']})}\n\n"
+        except Exception as e:
+            print(f"[Backend Error] Ollama stream failed: {e}")
+            error_msg = "⚠️ **System Alert:** The model failed to load. Ensure Ollama is running and you have sufficient VRAM."
+            yield f"data: {json.dumps({'content': error_msg})}\n\n"
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 if __name__ == "__main__":
     import uvicorn
