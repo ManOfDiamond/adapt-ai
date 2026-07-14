@@ -14,8 +14,9 @@ Built by:
 
 ## What it does
 
-1. **Scans your hardware:** reads live RAM and VRAM (NVIDIA GPUs, via GPUtil)
-   and scores your machine's compatibility for running local LLMs.
+1. **Scans your hardware:** reads live RAM and VRAM (NVIDIA GPUs, via GPUtil
+   with an `nvidia-smi` fallback on Linux) and scores your machine's
+   compatibility for running local LLMs.
 2. **Recommends a model:** matches your available memory against a small
    catalog of Ollama models, from Qwen 2.5 (0.5B) up to Llama 3.2 Vision (11B).
 3. **Live telemetry:** once you launch the workspace, RAM/VRAM usage is
@@ -28,7 +29,8 @@ Built by:
 
 ## Stack
 
-- **Backend:** FastAPI, Ollama (Python client), psutil, GPUtil
+- **Backend:** FastAPI, Ollama (Python client), psutil, GPUtil, `nvidia-smi`
+   fallback for Linux VRAM detection
 - **Frontend:** Vanilla JS, Tailwind (CDN), Chart.js
 
 ## Running locally

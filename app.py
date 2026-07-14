@@ -7,6 +7,7 @@ import psutil
 import json
 import io
 import os
+import subprocess
 from contextlib import redirect_stdout
 from typing import Optional
 
@@ -44,14 +45,34 @@ def get_memory_stats():
         "gpu_used_vram_gb": 0.0,
         "has_gpu": False
     }
+
+    def apply_gpu_stats(memory_total_mb, memory_free_mb, memory_used_mb):
+        stats["gpu_total_vram_gb"] = round(memory_total_mb / 1024.0, 2)
+        stats["gpu_free_vram_gb"] = round(memory_free_mb / 1024.0, 2)
+        stats["gpu_used_vram_gb"] = round(memory_used_mb / 1024.0, 2)
+        stats["has_gpu"] = True
+
     try:
         if GPUtil:
             gpus = GPUtil.getGPUs()
             if gpus and len(gpus) > 0:
-                stats["gpu_total_vram_gb"] = round(gpus[0].memoryTotal / 1024.0, 2)
-                stats["gpu_free_vram_gb"] = round(gpus[0].memoryFree / 1024.0, 2)
-                stats["gpu_used_vram_gb"] = round(gpus[0].memoryUsed / 1024.0, 2)
-                stats["has_gpu"] = True
+                apply_gpu_stats(gpus[0].memoryTotal, gpus[0].memoryFree, gpus[0].memoryUsed)
+                return stats
+
+        nvidia_smi = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total,memory.free,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        first_gpu = next((line.strip() for line in nvidia_smi.stdout.splitlines() if line.strip()), None)
+        if first_gpu:
+            memory_total_mb, memory_free_mb, memory_used_mb = [float(value.strip()) for value in first_gpu.split(",")[:3]]
+            apply_gpu_stats(memory_total_mb, memory_free_mb, memory_used_mb)
     except Exception as e:
         stats["has_gpu"] = False
     return stats
