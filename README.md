@@ -163,6 +163,9 @@ download size reported by the upstream library pages:
 | `llama3.2-vision` | 7.8 GB | Multimodal image reasoning model for image understanding; best fit for 8 GB-class GPUs |
 
 ## Known limitation(s)
+- `/api/execute` runs code in an isolated subprocess with a 5-second timeout
+  and a blocklist on `open`/`input`/`exit`/`quit`, and CORS is restricted to
+  the app's own local origins. It's still not a full sandbox.
 - Model downloads happen on first use if the recommended model isn't already
   pulled locally, which can take a while depending on model size and
   connection speed.

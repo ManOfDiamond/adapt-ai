@@ -12,6 +12,7 @@ import os
 import time
 from pathlib import Path
 import subprocess
+import sys
 from contextlib import redirect_stdout
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -45,7 +46,11 @@ _browser_opened = False
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "null",  # file:// origin, sent by browsers when index.html is opened directly
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -350,15 +355,34 @@ async def get_live_metrics():
 
 @app.post("/api/execute")
 async def execute_python_code(payload: CodePayload):
-    output_buffer = io.StringIO()
+    # Run in a separate subprocess (not in-process exec()) so a crash, hang,
+    # or attempt to touch the server's own state can't affect this app --
+    # the child process is disposable and killed on timeout.
+    restricted_prelude = (
+        "import builtins\n"
+        "_blocked = ('open', 'input', 'exit', 'quit')\n"
+        "for _name in _blocked:\n"
+        "    if hasattr(builtins, _name):\n"
+        "        setattr(builtins, _name, None)\n"
+    )
+    full_code = restricted_prelude + payload.code
+
     try:
-        with redirect_stdout(output_buffer):
-            exec_globals = {}
-            exec(payload.code, exec_globals)
-        result = output_buffer.getvalue()
-        if not result.strip():
-            result = "[Execution Successful: No terminal output returned.]"
-        return {"success": True, "output": result}
+        proc = subprocess.run(
+            [sys.executable, "-I", "-c", full_code],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        output = proc.stdout
+        if proc.returncode != 0:
+            output = (output + "\n" + proc.stderr).strip()
+            return {"success": False, "output": output or "Runtime Error: process exited with a non-zero status."}
+        if not output.strip():
+            output = "[Execution Successful: No terminal output returned.]"
+        return {"success": True, "output": output}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "output": "Runtime Error: execution timed out after 5 seconds."}
     except Exception as e:
         return {"success": False, "output": f"Runtime Error: {str(e)}"}
 
