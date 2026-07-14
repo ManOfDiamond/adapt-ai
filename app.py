@@ -1,3 +1,5 @@
+import atexit
+import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -7,16 +9,39 @@ import psutil
 import json
 import io
 import os
+import time
+from pathlib import Path
 import subprocess
 from contextlib import redirect_stdout
+from contextlib import asynccontextmanager
 from typing import Optional
+import webbrowser
+import socket
+import platform
 
 try:
     import GPUtil
 except ImportError:
     GPUtil = None
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await launch_app_side_effects()
+        yield
+    finally:
+        stop_ollama_if_started()
+
+
+app = FastAPI(lifespan=lifespan)
+
+OLLAMA_HOST = "127.0.0.1"
+OLLAMA_PORT = 11434
+INDEX_HTML_PATH = Path(__file__).with_name("index.html").resolve()
+
+_ollama_process: subprocess.Popen | None = None
+_ollama_started_by_app = False
+_browser_opened = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,6 +58,173 @@ class ChatPayload(BaseModel):
 
 class CodePayload(BaseModel):
     code: str
+
+
+def is_ollama_running() -> bool:
+    try:
+        with socket.create_connection((OLLAMA_HOST, OLLAMA_PORT), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def get_preferred_cuda_visible_devices() -> Optional[str]:
+    if GPUtil:
+        gpus = GPUtil.getGPUs()
+        if gpus:
+            preferred_gpu = max(gpus, key=lambda gpu: gpu.memoryTotal)
+            preferred_uuid = getattr(preferred_gpu, "uuid", None)
+            if preferred_uuid:
+                return str(preferred_uuid)
+            return str(preferred_gpu.id)
+
+    try:
+        nvidia_smi = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,uuid,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        preferred_uuid = None
+        preferred_index = None
+        preferred_memory = -1.0
+        for line in nvidia_smi.stdout.splitlines():
+            if not line.strip():
+                continue
+            gpu_index, gpu_uuid, memory_total = [part.strip() for part in line.split(",")[:3]]
+            total_gb = float(memory_total) / 1024.0
+            if total_gb > preferred_memory:
+                preferred_memory = total_gb
+                preferred_uuid = gpu_uuid
+                preferred_index = gpu_index
+        if preferred_uuid:
+            return preferred_uuid
+        if preferred_index is not None:
+            return preferred_index
+    except Exception:
+        pass
+
+    return None
+
+
+def stop_external_ollama_processes() -> None:
+    current_pid = os.getpid()
+    for process in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            if process.info["pid"] == current_pid:
+                continue
+
+            process_name = (process.info.get("name") or "").lower()
+            process_cmdline = " ".join(process.info.get("cmdline") or []).lower()
+            if "ollama" not in process_name and "ollama" not in process_cmdline:
+                continue
+
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                process.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+
+def start_ollama_if_needed(force_restart: bool = False) -> bool:
+    global _ollama_process, _ollama_started_by_app
+
+    if is_ollama_running():
+        if not force_restart:
+            return False
+        stop_external_ollama_processes()
+        for _ in range(20):
+            if not is_ollama_running():
+                break
+            time.sleep(0.25)
+        if is_ollama_running():
+            return False
+
+    launch_env = os.environ.copy()
+    if "CUDA_VISIBLE_DEVICES" not in launch_env:
+        preferred_cuda_devices = get_preferred_cuda_visible_devices()
+        if preferred_cuda_devices is not None:
+            launch_env["CUDA_VISIBLE_DEVICES"] = preferred_cuda_devices
+    launch_env.setdefault("OLLAMA_FLASH_ATTENTION", "1")
+    launch_env.setdefault("OLLAMA_KV_CACHE_TYPE", "q8_0")
+    launch_env.setdefault("OLLAMA_NUM_PARALLEL", "1")
+
+    if platform.system() == "Windows":
+        _ollama_process = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=launch_env,
+        )
+    else:
+        _ollama_process = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=launch_env,
+        )
+    _ollama_started_by_app = True
+    return True
+
+
+async def wait_for_ollama_ready(timeout_seconds: float = 10.0) -> bool:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    while loop.time() < deadline:
+        if is_ollama_running():
+            return True
+        if _ollama_process is not None and _ollama_process.poll() is not None:
+            break
+        await asyncio.sleep(0.25)
+    return is_ollama_running()
+
+
+def stop_ollama_if_started() -> None:
+    global _ollama_process, _ollama_started_by_app
+
+    if not _ollama_started_by_app or _ollama_process is None:
+        return
+
+    if _ollama_process.poll() is None:
+        _ollama_process.terminate()
+        try:
+            _ollama_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _ollama_process.kill()
+    _ollama_process = None
+    _ollama_started_by_app = False
+
+
+def open_index_html() -> None:
+    global _browser_opened
+
+    if _browser_opened:
+        return
+
+    webbrowser.open(INDEX_HTML_PATH.as_uri(), new=1, autoraise=True)
+    _browser_opened = True
+
+
+async def launch_app_side_effects() -> None:
+    try:
+        start_ollama_if_needed(force_restart=True)
+        await wait_for_ollama_ready()
+    except FileNotFoundError:
+        print("[Adapt AI] Warning: Ollama binary not found on PATH.")
+
+    await asyncio.sleep(0.5)
+    open_index_html()
+
+
+atexit.register(stop_ollama_if_started)
 
 def get_memory_stats():
     vm = psutil.virtual_memory()
@@ -95,34 +287,59 @@ def calculate_compatibility_score(stats):
         score = max(5, score - 10)
     return min(score, 100)
 
+
+AVAILABLE_MODELS = [
+    {"id": "qwen2.5:0.5b", "name": "Qwen 2.5 (0.5B)", "min_gb": 1.0},
+    {"id": "qwen2.5:1.5b", "name": "Qwen 2.5 (1.5B)", "min_gb": 2.5},
+    {"id": "gemma2:2b", "name": "Gemma 2 (2B)", "min_gb": 3.0},
+    {"id": "llama3.2:1b", "name": "Llama 3.2 (1B)", "min_gb": 2.0},
+    {"id": "phi3:mini", "name": "Phi-3 Mini", "min_gb": 3.5},
+    {"id": "llama3.2:3b", "name": "Llama 3.2 (3B)", "min_gb": 5.0},
+    {"id": "mistral:7b", "name": "Mistral (7B)", "min_gb": 8.0},
+    {"id": "llava:7b", "name": "LLaVA (7B) - Image Understanding", "min_gb": 5.0},
+    {"id": "gemma3:4b", "name": "Gemma 3 (4B) - Image Understanding", "min_gb": 5.5},
+    {"id": "llama3.1:8b", "name": "Llama 3.1 (8B)", "min_gb": 9.0},
+    {"id": "llava:13b", "name": "LLaVA (13B) - Image Understanding", "min_gb": 9.0},
+    {"id": "gemma2:9b", "name": "Gemma 2 (9B)", "min_gb": 10.0},
+    {"id": "llama3.2-vision", "name": "Llama 3.2 Vision (11B) - Image Understanding", "min_gb": 7.5},
+]
+
+VRAM_RECOMMENDATION_BANDS = [
+    {"min_gb": 0.0, "max_gb": 1.5, "model_id": "qwen2.5:0.5b"},
+    {"min_gb": 1.5, "max_gb": 2.5, "model_id": "qwen2.5:1.5b"},
+    {"min_gb": 2.5, "max_gb": 3.5, "model_id": "llama3.2:1b"},
+    {"min_gb": 3.5, "max_gb": 4.5, "model_id": "phi3:mini"},
+    {"min_gb": 4.5, "max_gb": 5.5, "model_id": "llama3.2:3b"},
+    {"min_gb": 5.5, "max_gb": 7.5, "model_id": "mistral:7b"},
+    {"min_gb": 7.5, "max_gb": 9.0, "model_id": "mistral:7b"},
+    {"min_gb": 9.0, "max_gb": 10.0, "model_id": "llama3.1:8b"},
+    {"min_gb": 10.0, "max_gb": 12.0, "model_id": "gemma2:9b"},
+    {"min_gb": 12.0, "max_gb": float("inf"), "model_id": "gemma2:9b"},
+]
+
+
+def recommend_model_for_vram(vram_gb: float) -> str:
+    for band in VRAM_RECOMMENDATION_BANDS:
+        if band["min_gb"] <= vram_gb < band["max_gb"]:
+            return band["model_id"]
+    return "qwen2.5:0.5b"
+
 @app.get("/api/benchmark")
 async def benchmark_hardware():
     try:
         mem_stats = get_memory_stats()
         
-        available_models = [
-            {"id": "qwen2.5:0.5b", "name": "Qwen 2.5 (0.5B)", "min_gb": 1.0},
-            {"id": "llama3.2:1b", "name": "Llama 3.2 (1B)", "min_gb": 2.0},
-            {"id": "llama3.2:3b", "name": "Llama 3.2 (3B)", "min_gb": 5.0},
-            {"id": "llama3.1:8b", "name": "Llama 3.1 (8B)", "min_gb": 9.0},
-            {"id": "llama3.2-vision", "name": "Llama 3.2 Vision (11B) - Photos", "min_gb": 10.0}
-        ]
-        
-        primary_memory = mem_stats["gpu_total_vram_gb"] if mem_stats["has_gpu"] else (mem_stats["total_ram_gb"] * 0.5)
+        primary_vram = mem_stats["gpu_total_vram_gb"] if mem_stats["has_gpu"] else (mem_stats["total_ram_gb"] * 0.5)
         compatibility_score = calculate_compatibility_score(mem_stats)
-        
-        if primary_memory >= 10.0: recommended_model = "llama3.2-vision"
-        elif primary_memory >= 9.0: recommended_model = "llama3.1:8b"
-        elif primary_memory >= 5.0: recommended_model = "llama3.2:3b"
-        elif primary_memory >= 2.0: recommended_model = "llama3.2:1b"
-        else: recommended_model = "qwen2.5:0.5b"
+
+        recommended_model = recommend_model_for_vram(primary_vram)
 
         return {
             "safe": True,
             "compatibility_score": compatibility_score,
             "memory": mem_stats,
             "recommendation": recommended_model,
-            "catalog": available_models
+            "catalog": AVAILABLE_MODELS
         }
     except Exception as e:
         return {"safe": False, "reason": "Ollama not running."}
@@ -164,9 +381,9 @@ async def chat_stream(payload: ChatPayload):
     safe_messages = compress_context_safeguard(payload.messages)
     
     chat_options = {}
-    if getattr(payload, "options", None):
-        if "num_ctx" in payload.options and payload.options["num_ctx"] is not None:
-            chat_options["num_ctx"] = payload.options["num_ctx"]
+    options = payload.options or {}
+    if options.get("num_ctx") is not None:
+        chat_options["num_ctx"] = options["num_ctx"]
 
     async def event_generator():
         try:
