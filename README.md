@@ -12,6 +12,48 @@ Built by:
 - Kaustabh Dua ([@coolbandariya](https://github.com/coolbandariya))
 - Aishni Rathore ([@wildchord](https://github.com/wildchord))
 
+## Problem statement
+
+Running a local LLM sounds simple until you actually try it: pick the wrong
+model and you either get an app that can't load ("out of memory") or one that
+runs so slowly it's unusable. Most local-AI tutorials assume you already know
+your GPU's VRAM, your model's memory footprint, and which quantization to
+pick, and if you guess wrong, the failure mode is usually a cryptic OOM error
+after a multi-gigabyte download.
+
+## Solution overview
+
+Adapt AI removes the guesswork. Before you download anything, it reads your
+actual hardware (RAM, and VRAM if you have an NVIDIA GPU), scores your
+machine's compatibility, and recommends a specific Ollama model sized to fit
+what you have. From there it gives you a full local chat
+workspace: streaming responses, live RAM/VRAM telemetry while you chat, file
+attachments, and an in-browser Python execution sandbox, all running against
+the model on your own machine.
+
+## On-Device AI usage
+
+All AI inference in Adapt AI runs locally through [Ollama](https://ollama.com),
+which the backend manages directly on the user's machine:
+
+- The FastAPI backend launches Ollama as a local subprocess automatically if
+  it isn't already running (`start_ollama_if_needed` in `app.py`), and shuts
+  it down when the app exits.
+- On NVIDIA hardware, the app selects the strongest detected GPU and passes
+  it to Ollama via `CUDA_VISIBLE_DEVICES`, so inference runs on-device on your
+  own GPU rather than a remote server.
+- Chat completions (`/api/chat`) and model downloads (`ollama.pull`) both go
+  through the local Ollama Python client, no request containing your prompts
+  or chat history is ever sent to a cloud AI API.
+- Hardware profiling (`/api/benchmark`, `/api/metrics`) reads your system's
+  RAM via `psutil` and VRAM via `GPUtil` (with an `nvidia-smi` fallback on
+  Linux), entirely on-device, to decide which model you can realistically run.
+
+The only network activity involved is the one-time model weights download
+from Ollama's library the first time you pick a new model; after that,
+every chat message and every code execution happens locally, offline-capable
+once the model is on disk.
+
 ## What it does
 
 1. **Scans your hardware:** reads live RAM and VRAM (NVIDIA GPUs, via GPUtil
