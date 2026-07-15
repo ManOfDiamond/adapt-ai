@@ -112,19 +112,23 @@ the full model catalog (reproducible with
 
 ## Running locally
 
-1. Install dependencies:
+1. **Linux only:** create and activate a virtual environment first:
+   ```bash
+   python -m venv venv && source venv/bin/activate
+   ```
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-2. Install [Ollama](https://ollama.com).
-3. Start:
+3. Install [Ollama](https://ollama.com).
+4. Start:
    ```bash
    python app.py
    ```
    This runs on `http://0.0.0.0:8000` by default. If Ollama is not already
    running, the app will start it automatically and shut it down when the
    server exits.
-4. `index.html` opens automatically in your default browser after startup.
+5. `index.html` opens automatically in your default browser after startup.
 
 ### Sample usage
 
