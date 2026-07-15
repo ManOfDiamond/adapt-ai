@@ -1,0 +1,24 @@
+Adapt AI — architecture (plain-text fallback)
+================================================
+
+Browser
+  index.html + css + js/app.js
+    |
+    | fetch() over HTTP, same-origin
+    v
+FastAPI backend (app.py)
+    |
+    +-- /api/metrics    --> psutil / GPUtil / nvidia-smi
+    +-- /api/benchmark  --> psutil / GPUtil / nvidia-smi
+    +-- /api/execute    --> subprocess (python -I), 5s timeout
+    +-- /api/chat       --> ollama Python client
+                                |
+                                v
+                          Ollama process
+                          (auto-launched by the backend)
+                                |
+                                v
+                          Local model weights
+                          (downloaded once, cached on disk)
+
+See ARCHITECTURE.md for the rendered Mermaid version of this diagram.

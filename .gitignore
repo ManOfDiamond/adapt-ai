@@ -1,5 +1,6 @@
 # project-specific ignores
 generated_images/
+*.bak
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
