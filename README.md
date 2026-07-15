@@ -81,6 +81,9 @@ on-device, what requires internet, and how data is handled.
 
 ## Screenshots
 
+### Start page
+![Start page](docs/screenshots/start_ui.jpeg)
+
 ### Hardware scan
 ![Hardware scan](docs/screenshots/scan.jpeg)
 
@@ -90,8 +93,8 @@ on-device, what requires internet, and how data is handled.
 ### Model selection
 ![Model selection](docs/screenshots/model_selection.jpeg)
 
-### Python Execution
-![Python Execution](docs/screenshots/python_exec.jpeg)
+### Python execution
+![Python execution](docs/screenshots/python_exec.jpeg)
 
 ## Stack
 
